@@ -250,7 +250,7 @@ class BappApiClient
      * @param string|null $variation Variation code for public_view entries (e.g. "v4").
      * @return string|null URL string, or null if the record has no view tokens.
      */
-    public function getDocumentUrl(array $record, string $output = 'html', ?string $label = null, ?string $variation = null): ?string
+    public function getDocumentUrl(array $record, string $output = 'html', ?string $label = null, ?string $variation = null, bool $download = false): ?string
     {
         $views = $this->getDocumentViews($record);
         if (empty($views)) {
@@ -281,12 +281,20 @@ class BappApiClient
             if ($v !== null) {
                 $url .= "&variation={$v}";
             }
+            if ($download) {
+                $url .= '&download=true';
+            }
             return $url;
         }
 
         // Legacy view_token
-        $actions = ['pdf' => 'pdf.download', 'context' => 'pdf.context'];
-        $action = $actions[$output] ?? 'pdf.preview';
+        if ($output === 'pdf') {
+            $action = $download ? 'pdf.download' : 'pdf.view';
+        } elseif ($output === 'context') {
+            $action = 'pdf.context';
+        } else {
+            $action = 'pdf.preview';
+        }
         return "{$this->host}/documents/{$action}?token={$token}";
     }
 
@@ -301,9 +309,9 @@ class BappApiClient
      * @param string|null $variation Variation code for public_view entries.
      * @return string|null Raw content bytes, or null if no view tokens.
      */
-    public function getDocumentContent(array $record, string $output = 'html', ?string $label = null, ?string $variation = null): ?string
+    public function getDocumentContent(array $record, string $output = 'html', ?string $label = null, ?string $variation = null, bool $download = false): ?string
     {
-        $url = $this->getDocumentUrl($record, $output, $label, $variation);
+        $url = $this->getDocumentUrl($record, $output, $label, $variation, $download);
         if ($url === null) {
             return null;
         }
