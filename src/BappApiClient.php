@@ -205,6 +205,112 @@ class BappApiClient
         return $this->request('DELETE', "/content-type/$contentType/$id/");
     }
 
+    // -- document views -----------------------------------------------------
+
+    /**
+     * Extract available document views from a record.
+     *
+     * Works with both public_view (new) and view_token (legacy) formats.
+     * Returns a list of arrays with keys: label, token, type, variations,
+     * default_variation.
+     */
+    public function getDocumentViews(array $record): array
+    {
+        $views = [];
+        foreach (($record['public_view'] ?? []) as $entry) {
+            $views[] = [
+                'label' => $entry['label'] ?? '',
+                'token' => $entry['view_token'] ?? '',
+                'type' => 'public_view',
+                'variations' => $entry['variations'] ?? null,
+                'default_variation' => $entry['default_variation'] ?? null,
+            ];
+        }
+        foreach (($record['view_token'] ?? []) as $entry) {
+            $views[] = [
+                'label' => $entry['label'] ?? '',
+                'token' => $entry['view_token'] ?? '',
+                'type' => 'view_token',
+                'variations' => null,
+                'default_variation' => null,
+            ];
+        }
+        return $views;
+    }
+
+    /**
+     * Build a document render/download URL from a record.
+     *
+     * Works with both public_view and view_token formats.
+     * Prefers public_view when both are present on a record.
+     *
+     * @param array $record Entity from list() or get().
+     * @param string $output Desired format: "html", "pdf", "jpg", or "context".
+     * @param string|null $label Select a specific view by label (first if null).
+     * @param string|null $variation Variation code for public_view entries (e.g. "v4").
+     * @return string|null URL string, or null if the record has no view tokens.
+     */
+    public function getDocumentUrl(array $record, string $output = 'html', ?string $label = null, ?string $variation = null): ?string
+    {
+        $views = $this->getDocumentViews($record);
+        if (empty($views)) {
+            return null;
+        }
+
+        $view = null;
+        if ($label !== null) {
+            foreach ($views as $v) {
+                if ($v['label'] === $label) {
+                    $view = $v;
+                    break;
+                }
+            }
+        }
+        if ($view === null) {
+            $view = $views[0];
+        }
+
+        $token = $view['token'];
+        if (empty($token)) {
+            return null;
+        }
+
+        if ($view['type'] === 'public_view') {
+            $url = "{$this->host}/render/{$token}?output={$output}";
+            $v = $variation ?? ($view['default_variation'] ?? null);
+            if ($v !== null) {
+                $url .= "&variation={$v}";
+            }
+            return $url;
+        }
+
+        // Legacy view_token
+        $actions = ['pdf' => 'pdf.download', 'context' => 'pdf.context'];
+        $action = $actions[$output] ?? 'pdf.preview';
+        return "{$this->host}/documents/{$action}?token={$token}";
+    }
+
+    /**
+     * Fetch document content (PDF, HTML, JPG, etc.) as a string of bytes.
+     *
+     * Builds the URL via getDocumentUrl() and performs a plain GET request.
+     *
+     * @param array $record Entity from list() or get().
+     * @param string $output Desired format: "html", "pdf", "jpg", or "context".
+     * @param string|null $label Select a specific view by label.
+     * @param string|null $variation Variation code for public_view entries.
+     * @return string|null Raw content bytes, or null if no view tokens.
+     */
+    public function getDocumentContent(array $record, string $output = 'html', ?string $label = null, ?string $variation = null): ?string
+    {
+        $url = $this->getDocumentUrl($record, $output, $label, $variation);
+        if ($url === null) {
+            return null;
+        }
+        $response = $this->http->get($url);
+        return $response->getBody()->getContents();
+    }
+
     // -- tasks --------------------------------------------------------------
 
     public function listTasks(): mixed

@@ -87,6 +87,9 @@ $client->app = 'wms';
 | `delete(content_type, id)` | Delete an entity |
 | `list_introspect(content_type)` | Get list view metadata |
 | `detail_introspect(content_type)` | Get detail view metadata |
+| `get_document_views(record)` | Extract available views from a record |
+| `get_document_url(record, output?, label?, variation?)` | Build a render/download URL |
+| `get_document_content(record, output?, label?, variation?)` | Fetch document bytes (PDF, HTML, JPG) |
 | `list_tasks()` | List available task codes |
 | `detail_task(code)` | Get task configuration |
 | `run_task(code, payload?)` | Execute a task |
@@ -119,6 +122,40 @@ $client->create('myapp.document', [
     'file' => new \SplFileInfo('/path/to/report.pdf'),
 ]);
 ```
+
+## Document Views
+
+Records may include `public_view` and/or `view_token` fields with JWT tokens
+for rendering documents (invoices, orders, reports, etc.) as HTML, PDF, or images.
+
+The SDK normalises both formats and builds the correct URL automatically:
+
+```php
+$order = $client->get('company_order.order', '42');
+
+// Get a PDF download URL (auto-detects public_view vs view_token)
+$url = $client->getDocumentUrl($order, 'pdf');
+
+// Pick a specific view by label
+$url = $client->getDocumentUrl($order, 'html', 'Comanda interna');
+
+// Use a variation
+$url = $client->getDocumentUrl($order, 'pdf', null, 'v4');
+
+// Fetch the actual content as bytes
+$pdfBytes = $client->getDocumentContent($order, 'pdf');
+file_put_contents('order.pdf', $pdfBytes);
+
+// Enumerate all available views
+$views = $client->getDocumentViews($order);
+foreach ($views as $v) {
+    echo $v['label'] . ' ' . $v['type'] . PHP_EOL;
+}
+```
+
+`get_document_views()` returns a list of normalised view entries with `label`,
+`token`, `type` (`"public_view"` or `"view_token"`), `variations`, and
+`default_variation`. Use it to enumerate available views (e.g. for a dropdown).
 
 ## Tasks
 
