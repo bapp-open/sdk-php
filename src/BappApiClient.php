@@ -33,6 +33,7 @@ class BappApiClient
     public string $host;
     public ?string $tenant;
     public string $app;
+    public ?string $userAgent;
     private ?string $authHeader = null;
     private Client $http;
 
@@ -41,6 +42,7 @@ class BappApiClient
         $this->host = rtrim($options['host'] ?? 'https://panel.bapp.ro/api', '/');
         $this->tenant = $options['tenant'] ?? null;
         $this->app = $options['app'] ?? 'account';
+        $this->userAgent = $options['user_agent'] ?? null;
 
         if (isset($options['bearer'])) {
             $this->authHeader = 'Bearer ' . $options['bearer'];
@@ -54,6 +56,9 @@ class BappApiClient
     private function buildHeaders(array $extra = []): array
     {
         $h = [];
+        if ($this->userAgent !== null) {
+            $h['User-Agent'] = $this->userAgent;
+        }
         if ($this->authHeader !== null) {
             $h['Authorization'] = $this->authHeader;
         }
