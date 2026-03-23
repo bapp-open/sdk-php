@@ -35,6 +35,8 @@ class BappApiClient
     public string $app;
     public ?string $userAgent;
     private ?string $authHeader = null;
+    private int $timeout;
+    private int $maxRetries;
     private Client $http;
 
     public function __construct(array $options = [])
@@ -43,6 +45,8 @@ class BappApiClient
         $this->tenant = $options['tenant'] ?? null;
         $this->app = $options['app'] ?? 'account';
         $this->userAgent = $options['user_agent'] ?? null;
+        $this->timeout = $options['timeout'] ?? 30;
+        $this->maxRetries = $options['max_retries'] ?? 3;
 
         if (isset($options['bearer'])) {
             $this->authHeader = 'Bearer ' . $options['bearer'];
@@ -50,7 +54,7 @@ class BappApiClient
             $this->authHeader = 'Token ' . $options['token'];
         }
 
-        $this->http = new Client();
+        $this->http = new Client(['timeout' => $this->timeout]);
     }
 
     private function buildHeaders(array $extra = []): array
@@ -118,12 +122,32 @@ class BappApiClient
             $reqOptions['json'] = $options['json'];
         }
 
-        $response = $this->http->request($method, $url, $reqOptions);
+        $lastException = null;
+        for ($attempt = 0; $attempt <= $this->maxRetries; $attempt++) {
+            try {
+                $response = $this->http->request($method, $url, $reqOptions);
+                $status = $response->getStatusCode();
 
-        if ($response->getStatusCode() === 204) {
-            return null;
+                if (($status === 429 || $status >= 500) && $attempt < $this->maxRetries) {
+                    $backoff = min(pow(2, $attempt) + lcg_value(), 10);
+                    usleep((int) ($backoff * 1_000_000));
+                    continue;
+                }
+
+                if ($status === 204) {
+                    return null;
+                }
+                return json_decode($response->getBody()->getContents(), true);
+            } catch (\GuzzleHttp\Exception\ConnectException $e) {
+                $lastException = $e;
+                if ($attempt >= $this->maxRetries) {
+                    throw $e;
+                }
+                $backoff = min(pow(2, $attempt) + lcg_value(), 10);
+                usleep((int) ($backoff * 1_000_000));
+            }
         }
-        return json_decode($response->getBody()->getContents(), true);
+        throw $lastException;
     }
 
     // -- user ---------------------------------------------------------------
@@ -281,15 +305,15 @@ class BappApiClient
         }
 
         if ($view['type'] === 'public_view') {
-            $url = "{$this->host}/render/{$token}?output={$output}";
+            $params = ['output' => $output];
             $v = $variation ?? ($view['default_variation'] ?? null);
             if ($v !== null) {
-                $url .= "&variation={$v}";
+                $params['variation'] = $v;
             }
             if ($download) {
-                $url .= '&download=true';
+                $params['download'] = 'true';
             }
-            return $url;
+            return "{$this->host}/render/{$token}?" . http_build_query($params);
         }
 
         // Legacy view_token
@@ -300,7 +324,7 @@ class BappApiClient
         } else {
             $action = 'pdf.preview';
         }
-        return "{$this->host}/documents/{$action}?token={$token}";
+        return "{$this->host}/documents/{$action}?" . http_build_query(['token' => $token]);
     }
 
     /**
@@ -320,8 +344,34 @@ class BappApiClient
         if ($url === null) {
             return null;
         }
-        $response = $this->http->get($url);
+        $response = $this->http->get($url, ['timeout' => $this->timeout]);
         return $response->getBody()->getContents();
+    }
+
+    /**
+     * Stream document content directly to a file.
+     *
+     * Like getDocumentContent() but streams to $dest without buffering
+     * the entire document in memory.
+     *
+     * @param array $record Entity from list() or get().
+     * @param string $dest File path to write to.
+     * @param string $output Desired format: "html", "pdf", "jpg", or "context".
+     * @param string|null $label Select a specific view by label.
+     * @param string|null $variation Variation code for public_view entries.
+     * @return bool True if saved, false if no view tokens.
+     */
+    public function downloadDocument(array $record, string $dest, string $output = 'html', ?string $label = null, ?string $variation = null, bool $download = false): bool
+    {
+        $url = $this->getDocumentUrl($record, $output, $label, $variation, $download);
+        if ($url === null) {
+            return false;
+        }
+        $this->http->get($url, [
+            'sink' => $dest,
+            'timeout' => $this->timeout,
+        ]);
+        return true;
     }
 
     // -- tasks --------------------------------------------------------------
